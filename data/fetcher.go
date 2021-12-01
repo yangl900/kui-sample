@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,31 +30,37 @@ func GetClusterState() ([]ClusterState, error) {
 	}
 
 	clusters := make([]ClusterState, 0, len(rawConfig.Contexts))
+	wg := sync.WaitGroup{}
+	mu := sync.Mutex{}
 	for n := range rawConfig.Contexts {
-		restConfig, clientSet, err := getKubeClient(n)
-		if err != nil {
-			reterr := fmt.Errorf("error getting client for %s: %s\n", n, err)
-			clusters = append(clusters, ClusterState{Error: reterr, Context: n})
-			continue
-		}
+		fmt.Printf("Fetching data from %s\n", n)
+		wg.Add(1)
+		go func(ctx string) {
+			defer wg.Done()
+			restConfig, clientSet, err := getKubeClient(ctx)
+			if err != nil {
+				reterr := fmt.Errorf("error getting client for %s: %s", ctx, err)
+				clusters = append(clusters, ClusterState{Error: reterr, Context: ctx})
+			}
 
-		nodes, err := clientSet.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
-		if err != nil {
-			reterr := fmt.Errorf("error getting nodes for %s: %s\n", n, err)
-			clusters = append(clusters, ClusterState{Error: reterr, Context: n})
-			continue
-		}
+			nodes, err := clientSet.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+			if err != nil {
+				reterr := fmt.Errorf("error getting nodes for %s: %s", ctx, err)
+				clusters = append(clusters, ClusterState{Error: reterr, Context: ctx})
+			}
 
-		pods, err := clientSet.CoreV1().Pods("").List(context.TODO(), metav1.ListOptions{})
-		if err != nil {
-			reterr := fmt.Errorf("error getting nodes for %s: %s\n", n, err)
-			clusters = append(clusters, ClusterState{Error: reterr, Context: n})
-			continue
-		}
-
-		clusters = append(clusters, ClusterState{Context: n, Host: restConfig.Host, Nodes: &nodes.Items, Pods: &pods.Items})
+			pods, err := clientSet.CoreV1().Pods("").List(context.TODO(), metav1.ListOptions{})
+			if err != nil {
+				reterr := fmt.Errorf("error getting nodes for %s: %s", ctx, err)
+				clusters = append(clusters, ClusterState{Error: reterr, Context: ctx})
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			clusters = append(clusters, ClusterState{Context: ctx, Host: restConfig.Host, Nodes: &nodes.Items, Pods: &pods.Items})
+		}(n)
 	}
 
+	wg.Wait()
 	return clusters, nil
 }
 

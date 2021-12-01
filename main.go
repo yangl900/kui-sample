@@ -30,6 +30,10 @@ func main() {
 	}
 
 	for _, c := range clusters {
+		if c.Error != nil {
+			continue
+		}
+
 		cc := c
 		list.AddItem(c.Context, fmt.Sprintf("%d/%d", len(*c.Nodes), len(*c.Pods)), ' ', func() { render(mainView, cc) })
 	}
